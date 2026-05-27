@@ -1,4 +1,4 @@
-# Bug Severity Prediction using CodeBERT and KICL on Defects4J + Bugs.jar
+# Improving Bug Severity Prediction with Domain-Specific Representation Learning: A CodeBERT and KICL Approach on Defects4J and Bugs.jar
 
 ![Python](https://img.shields.io/badge/Python-3.10+-blue)
 ![PyTorch](https://img.shields.io/badge/PyTorch-2.x-red)
