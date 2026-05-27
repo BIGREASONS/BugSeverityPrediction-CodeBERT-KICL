@@ -1,0 +1,31 @@
+BUG SEVERITY PREDICTION — RESULTS COMPARISON
+============================================================
+
+--------------------------------------
+Metric                        Baseline
+--------------------------------------
+Precision (Weighted)            0.6759
+Recall (Weighted)               0.3705
+F1 (Weighted)                   0.2879
+AUC (Weighted)                  0.7300
+MCC                             0.3049
+--------------------------------------
+F1 per Class:
+  F1 Critical (0)               0.3926
+  F1 Major (1)                  0.1203
+  F1 Medium (2)                 0.9143
+  F1 Minor (3)                  0.4143
+--------------------------------------
+
+
+Baseline Classification Report:
+              precision    recall  f1-score   support
+
+Critical (0)       0.28      0.68      0.39        47
+   Major (1)       0.86      0.06      0.12       294
+  Medium (2)       0.84      1.00      0.91        48
+   Minor (3)       0.28      0.77      0.41       113
+
+    accuracy                           0.37       502
+   macro avg       0.57      0.63      0.46       502
+weighted avg       0.68      0.37      0.29       502
