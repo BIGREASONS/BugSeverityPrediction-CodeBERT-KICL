@@ -155,6 +155,8 @@ Initial training with standard CrossEntropyLoss resulted in the model predicting
 ```bash
 git clone https://github.com/BIGREASONS/BugSeverityPrediction-CodeBERT-KICL.git
 cd BugSeverityPrediction-CodeBERT-KICL
+python -m venv .venv
+.venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
@@ -193,6 +195,12 @@ python scripts/compare_results.py
 ```
 
 See [`setup.md`](setup.md) for detailed setup instructions.
+
+## Learning Goals
+
+- Reproduce a modern software-engineering ML pipeline from dataset preparation to evaluation.
+- Understand how transformer embeddings, contrastive learning, and class-imbalance fixes affect bug triage.
+- Communicate experimental results clearly with metrics, plots, and reproducible scripts.
 
 ---
 
