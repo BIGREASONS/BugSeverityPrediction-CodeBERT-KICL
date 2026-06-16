@@ -23,11 +23,13 @@ import torch
 from torch.utils.data import DataLoader, WeightedRandomSampler
 from torch.optim import AdamW
 from sklearn.utils.class_weight import compute_class_weight as sklearn_compute_class_weight
+from sklearn.preprocessing import StandardScaler
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, matthews_corrcoef
 from transformers import AutoTokenizer, get_linear_schedule_with_warmup
 from tqdm import tqdm
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from dataset import BugSeverityDataset
+from dataset import BugSeverityDataset, EXPERIMENT_PRESETS
 from kicl_model import KICLModel
 
 
@@ -47,10 +49,23 @@ def parse_args():
     parser.add_argument('--batch_size', type=int, default=16)
     parser.add_argument('--lr', type=float, default=1e-5)
     parser.add_argument('--mlm_probability', type=float, default=0.5,
-                        help='Masking probability for KI-MLM (paper uses 50%)')
+                        help='Masking probability for KI-MLM (paper uses 50 percent)')
     parser.add_argument('--temperature', type=float, default=0.07)
     parser.add_argument('--seed', type=int, default=42)
     parser.add_argument('--max_train_samples', type=int, default=None)
+    parser.add_argument('--fusion_type', type=str, default='none',
+                        choices=['none', 'concat10', 'metric_encoder64'],
+                        help='Type of structural metric fusion')
+    parser.add_argument('--num_metrics', type=int, default=10,
+                        help='Number of metric features fused into the classifier '
+                             '(10 = legacy code-complexity metrics; 5 = BugsRepo metadata)')
+    parser.add_argument('--experiment', type=str, default=None,
+                        choices=['A', 'B', 'C'],
+                        help='BugsRepo experiment preset. Overrides --fusion_type, '
+                             'text fields, metric keys and --num_metrics.')
+    parser.add_argument('--run_name', type=str, default=None,
+                        help='Suffix for checkpoint/history filenames so runs do not '
+                             'overwrite each other. Defaults to the --experiment letter.')
     return parser.parse_args()
 
 
@@ -156,9 +171,12 @@ def train_finetune(model, dataloader, optimizer, scheduler, device):
         input_ids = batch['input_ids'].to(device)
         attention_mask = batch['attention_mask'].to(device)
         labels = batch['label'].to(device)
+        metrics = batch.get('metrics')
+        if metrics is not None:
+            metrics = metrics.to(device)
 
         optimizer.zero_grad()
-        outputs = model.forward_classify(input_ids, attention_mask, labels)
+        outputs = model.forward_classify(input_ids, attention_mask, labels, metrics=metrics)
         loss = outputs['loss']
         loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
@@ -178,27 +196,70 @@ def evaluate_finetune(model, dataloader, device):
     """Evaluate fine-tuned model."""
     model.eval()
     total_loss = 0
-    correct = 0
-    total = 0
+    all_preds = []
+    all_labels = []
 
     with torch.no_grad():
         for batch in tqdm(dataloader, desc='Evaluating', leave=False):
             input_ids = batch['input_ids'].to(device)
             attention_mask = batch['attention_mask'].to(device)
             labels = batch['label'].to(device)
+            metrics = batch.get('metrics')
+            if metrics is not None:
+                metrics = metrics.to(device)
 
-            outputs = model.forward_classify(input_ids, attention_mask, labels)
+            outputs = model.forward_classify(input_ids, attention_mask, labels, metrics=metrics)
             total_loss += outputs['loss'].item() * input_ids.size(0)
             preds = outputs['logits'].argmax(dim=-1)
-            correct += (preds == labels).sum().item()
-            total += labels.size(0)
+            
+            all_preds.extend(preds.cpu().tolist())
+            all_labels.extend(labels.cpu().tolist())
 
-    return total_loss / total, correct / total
+    total = len(all_labels)
+    avg_loss = total_loss / total
+    
+    acc = accuracy_score(all_labels, all_preds)
+    p_macro = precision_score(all_labels, all_preds, average='macro', zero_division=0)
+    p_weight = precision_score(all_labels, all_preds, average='weighted', zero_division=0)
+    r_macro = recall_score(all_labels, all_preds, average='macro', zero_division=0)
+    r_weight = recall_score(all_labels, all_preds, average='weighted', zero_division=0)
+    f1_macro = f1_score(all_labels, all_preds, average='macro', zero_division=0)
+    f1_weight = f1_score(all_labels, all_preds, average='weighted', zero_division=0)
+    mcc = matthews_corrcoef(all_labels, all_preds)
+    
+    return {
+        'loss': avg_loss,
+        'acc': acc,
+        'p_macro': p_macro,
+        'p_weight': p_weight,
+        'r_macro': r_macro,
+        'r_weight': r_weight,
+        'f1_macro': f1_macro,
+        'f1_weight': f1_weight,
+        'mcc': mcc
+    }
 
 
 def main():
     args = parse_args()
     torch.manual_seed(args.seed)
+
+    # Resolve a BugsRepo experiment preset (else fall back to legacy 'code' + 10 metrics).
+    if args.experiment is not None:
+        preset = EXPERIMENT_PRESETS[args.experiment]
+        text_fields = preset['text_fields']
+        metrics_keys = preset['metric_keys']
+        args.fusion_type = preset['fusion_type']
+        if metrics_keys:
+            args.num_metrics = len(metrics_keys)
+        if args.run_name is None:
+            args.run_name = args.experiment
+        print(f"Experiment {args.experiment}: text_fields={text_fields} | "
+              f"fusion_type={args.fusion_type} | num_metrics={args.num_metrics}")
+    else:
+        text_fields = None      # legacy: ['code']
+        metrics_keys = None     # legacy: 10 code-complexity metrics
+    run_suffix = f'_{args.run_name}' if args.run_name else ''
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f'Using device: {device}')
@@ -209,19 +270,32 @@ def main():
     tokenizer = AutoTokenizer.from_pretrained(args.model_name)
 
     train_dataset = BugSeverityDataset(
-        args.train_file, tokenizer, args.max_length, max_samples=args.max_train_samples
+        args.train_file, tokenizer, args.max_length, max_samples=args.max_train_samples,
+        text_fields=text_fields, metrics_keys=metrics_keys,
     )
-    valid_dataset = BugSeverityDataset(args.valid_file, tokenizer, args.max_length)
+    valid_dataset = BugSeverityDataset(
+        args.valid_file, tokenizer, args.max_length,
+        text_fields=text_fields, metrics_keys=metrics_keys,
+    )
 
 
 
     print(f'Train: {len(train_dataset)}, Valid: {len(valid_dataset)}')
+
+    metric_scaler = None
+    if args.fusion_type != 'none':
+        print('Applying StandardScaler to metrics...')
+        metric_scaler = StandardScaler()
+        train_dataset.apply_scaler(metric_scaler, fit=True)
+        valid_dataset.apply_scaler(metric_scaler, fit=False)
 
     # Create or load model
     model = KICLModel(
         model_name=args.model_name,
         num_labels=4,
         temperature=args.temperature,
+        fusion_type=args.fusion_type,
+        num_metrics=args.num_metrics,
     )
 
     if args.checkpoint:
@@ -236,10 +310,13 @@ def main():
     sampler = None
     if args.stage == 'finetune':
         train_labels_np = np.array([s['label'] for s in train_dataset.samples])
-        classes = np.arange(4)
-        cw = sklearn_compute_class_weight(
-            class_weight='balanced', classes=classes, y=train_labels_np
+        unique_classes = np.unique(train_labels_np)
+        cw_partial = sklearn_compute_class_weight(
+            class_weight='balanced', classes=unique_classes, y=train_labels_np
         )
+        cw = np.zeros(4, dtype=np.float32)
+        for c, w in zip(unique_classes, cw_partial):
+            cw[c] = w
         class_weights_tensor = torch.tensor(cw, dtype=torch.float32).to(device)
         model.class_weights = class_weights_tensor
 
@@ -293,29 +370,37 @@ def main():
 
         elif args.stage == 'finetune':
             train_loss, train_acc = train_finetune(model, train_loader, optimizer, scheduler, device)
-            val_loss, val_acc = evaluate_finetune(model, valid_loader, device)
+            eval_metrics = evaluate_finetune(model, valid_loader, device)
+            val_loss = eval_metrics['loss']
+            val_acc = eval_metrics['acc']
             print(f'Epoch {epoch}/{args.epochs} | '
                   f'Train Loss: {train_loss:.4f} Acc: {train_acc:.4f} | '
-                  f'Val Loss: {val_loss:.4f} Acc: {val_acc:.4f} | '
+                  f'Val Loss: {val_loss:.4f} Acc: {val_acc:.4f} F1-Macro: {eval_metrics["f1_macro"]:.4f} MCC: {eval_metrics["mcc"]:.4f} | '
                   f'Time: {time.time()-epoch_start:.0f}s')
             history.append({
                 'epoch': epoch,
                 'train_loss': round(train_loss, 4),
                 'train_acc': round(train_acc, 4),
-                'val_loss': round(val_loss, 4),
-                'val_acc': round(val_acc, 4),
+                **{k: round(v, 4) for k, v in eval_metrics.items()}
             })
             metric = val_loss
 
         # Save best checkpoint
         if metric < best_metric:
             best_metric = metric
-            save_path = os.path.join(args.output_dir, f'kicl_{args.stage}_best.pt')
+            save_path = os.path.join(args.output_dir, f'kicl_{args.stage}{run_suffix}_best.pt')
             torch.save({
                 'epoch': epoch,
                 'model_state_dict': model.state_dict(),
                 'metric': metric,
                 'args': vars(args),
+                # Self-describing config so evaluate.py can reproduce inference.
+                'fusion_type': args.fusion_type,
+                'num_metrics': args.num_metrics,
+                'metrics_keys': train_dataset.metrics_keys,
+                'text_fields': train_dataset.text_fields,
+                'scaler_mean': metric_scaler.mean_.tolist() if metric_scaler is not None else None,
+                'scaler_scale': metric_scaler.scale_.tolist() if metric_scaler is not None else None,
             }, save_path)
             print(f'  -> Saved best checkpoint to {save_path}')
 
@@ -323,7 +408,7 @@ def main():
     print(f'\n{args.stage} complete in {total_time:.0f}s ({total_time/60:.1f} min)')
 
     # Save history
-    hist_path = os.path.join(args.output_dir, f'kicl_{args.stage}_history.json')
+    hist_path = os.path.join(args.output_dir, f'kicl_{args.stage}{run_suffix}_history.json')
     with open(hist_path, 'w') as f:
         json.dump(history, f, indent=2)
     print(f'History saved to {hist_path}')

@@ -21,10 +21,12 @@ class KICLModel(nn.Module):
 
     def __init__(self, model_name='microsoft/codebert-base', num_labels=4,
                  dropout_rate=0.1, projection_dim=128, temperature=0.07,
-                 class_weights=None):
+                 class_weights=None, fusion_type='none', num_metrics=10):
         super().__init__()
         self.num_labels = num_labels
         self.temperature = temperature
+        self.fusion_type = fusion_type
+        self.num_metrics = num_metrics
         self.config = AutoConfig.from_pretrained(model_name)
         self.encoder = AutoModel.from_pretrained(model_name)
 
@@ -52,9 +54,24 @@ class KICLModel(nn.Module):
             nn.Linear(hidden_size, projection_dim),
         )
 
-        # Classification head (same architecture as baseline)
+        # Classification head
+        fusion_dim = hidden_size
+        if self.fusion_type == 'concat10':
+            fusion_dim += num_metrics
+        elif self.fusion_type == 'metric_encoder64':
+            self.metric_encoder = nn.Sequential(
+                nn.Linear(num_metrics, 32),
+                nn.ReLU(),
+                nn.Dropout(dropout_rate),
+                nn.Linear(32, 64),
+                nn.ReLU()
+            )
+            fusion_dim += 64
+        
+        print(f"KICLModel initialized with fusion_type='{fusion_type}'. Final classification dimension: {fusion_dim}")
+
         self.dropout = nn.Dropout(dropout_rate)
-        self.dense = nn.Linear(hidden_size, hidden_size)
+        self.dense = nn.Linear(fusion_dim, hidden_size)
         self.classifier = nn.Linear(hidden_size, num_labels)
 
     def encode(self, input_ids, attention_mask):
@@ -146,11 +163,18 @@ class KICLModel(nn.Module):
 
         return loss
 
-    def forward_classify(self, input_ids, attention_mask, labels=None):
+    def forward_classify(self, input_ids, attention_mask, labels=None, metrics=None):
         """Forward pass for classification (fine-tuning stage)."""
         cls_embedding = self.get_cls_embedding(input_ids, attention_mask)
 
-        x = self.dropout(cls_embedding)
+        x = cls_embedding
+        if self.fusion_type == 'concat10' and metrics is not None:
+            x = torch.cat([x, metrics], dim=1)
+        elif self.fusion_type == 'metric_encoder64' and metrics is not None:
+            metric_emb = self.metric_encoder(metrics)
+            x = torch.cat([x, metric_emb], dim=1)
+
+        x = self.dropout(x)
         x = self.dense(x)
         x = torch.tanh(x)
         x = self.dropout(x)
@@ -165,6 +189,6 @@ class KICLModel(nn.Module):
 
         return result
 
-    def forward(self, input_ids, attention_mask, labels=None):
+    def forward(self, input_ids, attention_mask, labels=None, metrics=None):
         """Default forward pass = classification."""
-        return self.forward_classify(input_ids, attention_mask, labels)
+        return self.forward_classify(input_ids, attention_mask, labels, metrics)
