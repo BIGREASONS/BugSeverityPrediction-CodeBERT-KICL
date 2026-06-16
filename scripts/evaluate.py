@@ -24,6 +24,7 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader
 from sklearn.metrics import (
+    accuracy_score,
     precision_score,
     recall_score,
     f1_score,
@@ -32,11 +33,13 @@ from sklearn.metrics import (
     confusion_matrix,
     classification_report,
 )
+from sklearn.preprocessing import StandardScaler
 from tqdm import tqdm
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from dataset import BugSeverityDataset
+from dataset import BugSeverityDataset, EXPERIMENT_PRESETS
 from model import CodeBERTClassifier
+from kicl_model import KICLModel
 
 
 def parse_args():
@@ -48,10 +51,20 @@ def parse_args():
     parser.add_argument('--batch_size', type=int, default=16)
     parser.add_argument('--max_length', type=int, default=256)
     parser.add_argument('--num_labels', type=int, default=4)
+    parser.add_argument('--arch', type=str, default='codebert',
+                        choices=['codebert', 'kicl'],
+                        help="Model architecture. 'kicl' is auto-selected when the "
+                             "checkpoint is a KICL model or --experiment is given.")
+    parser.add_argument('--experiment', type=str, default=None,
+                        choices=['A', 'B', 'C'],
+                        help='BugsRepo experiment preset (sets text fields + fusion).')
+    parser.add_argument('--fusion_type', type=str, default='none',
+                        choices=['none', 'concat10', 'metric_encoder64'])
+    parser.add_argument('--num_metrics', type=int, default=10)
     return parser.parse_args()
 
 
-def get_predictions(model, dataloader, device):
+def get_predictions(model, dataloader, device, use_metrics=False):
     """Run inference and collect all predictions, labels, and probabilities."""
     model.eval()
     all_preds = []
@@ -64,7 +77,12 @@ def get_predictions(model, dataloader, device):
             attention_mask = batch['attention_mask'].to(device)
             labels = batch['label']
 
-            outputs = model(input_ids=input_ids, attention_mask=attention_mask)
+            if use_metrics:
+                metrics = batch['metrics'].to(device)
+                outputs = model(input_ids=input_ids, attention_mask=attention_mask,
+                                metrics=metrics)
+            else:
+                outputs = model(input_ids=input_ids, attention_mask=attention_mask)
 
             preds = outputs['logits'].argmax(dim=-1).cpu().numpy()
             probs = outputs['probs'].cpu().numpy()
@@ -82,6 +100,9 @@ def compute_metrics(y_true, y_pred, y_prob, label_names=None):
         label_names = ['Critical (0)', 'Major (1)', 'Medium (2)', 'Minor (3)']
 
     metrics = {}
+
+    # Overall accuracy
+    metrics['accuracy'] = float(accuracy_score(y_true, y_pred))
 
     # Weighted metrics
     metrics['precision_weighted'] = float(precision_score(y_true, y_pred, average='weighted', zero_division=0))
@@ -162,7 +183,8 @@ def print_results(metrics):
     print('  BUG SEVERITY PREDICTION — EVALUATION RESULTS')
     print('=' * 60)
 
-    print(f'\n  Precision (Weighted):  {metrics["precision_weighted"]:.4f}')
+    print(f'\n  Accuracy:              {metrics["accuracy"]:.4f}')
+    print(f'  Precision (Weighted):  {metrics["precision_weighted"]:.4f}')
     print(f'  Recall (Weighted):     {metrics["recall_weighted"]:.4f}')
     print(f'  F1 (Weighted):         {metrics["f1_weighted"]:.4f}')
 
@@ -196,27 +218,66 @@ def main():
     from transformers import AutoTokenizer
     tokenizer = AutoTokenizer.from_pretrained(args.model_name)
 
-    # Load test dataset
+    # Load checkpoint first so it can describe its own architecture/config.
+    print(f'Loading model from {args.model_path}...')
+    checkpoint = torch.load(args.model_path, map_location=device, weights_only=False)
+    state_dict = checkpoint['model_state_dict']
+
+    # Resolve inference config. Precedence: --experiment > checkpoint metadata > CLI flags.
+    if args.experiment is not None:
+        preset = EXPERIMENT_PRESETS[args.experiment]
+        text_fields = preset['text_fields']
+        metrics_keys = preset['metric_keys']
+        fusion_type = preset['fusion_type']
+        num_metrics = len(metrics_keys) if metrics_keys else args.num_metrics
+    else:
+        text_fields = checkpoint.get('text_fields')
+        metrics_keys = checkpoint.get('metrics_keys')
+        fusion_type = checkpoint.get('fusion_type', args.fusion_type)
+        num_metrics = checkpoint.get('num_metrics', args.num_metrics)
+
+    # A KICL checkpoint carries a 'classifier.*' head; CodeBERT carries 'out_layer.*'.
+    is_kicl = (args.arch == 'kicl' or args.experiment is not None
+               or fusion_type != 'none'
+               or any(k.startswith('classifier.') for k in state_dict))
+    use_metrics = is_kicl and fusion_type != 'none'
+
+    # Load test dataset with the matching text fields / metric keys.
     print(f'Loading test data from {args.test_file}...')
-    test_dataset = BugSeverityDataset(args.test_file, tokenizer, args.max_length)
+    test_dataset = BugSeverityDataset(
+        args.test_file, tokenizer, args.max_length,
+        text_fields=text_fields, metrics_keys=metrics_keys,
+    )
+
+    # Re-apply the training StandardScaler (persisted in the checkpoint) to metrics.
+    if use_metrics and checkpoint.get('scaler_mean') is not None:
+        scaler = StandardScaler()
+        scaler.mean_ = np.array(checkpoint['scaler_mean'], dtype=float)
+        scaler.scale_ = np.array(checkpoint['scaler_scale'], dtype=float)
+        scaler.var_ = scaler.scale_ ** 2
+        scaler.n_features_in_ = scaler.mean_.shape[0]
+        test_dataset.apply_scaler(scaler, fit=False)
+
     test_loader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False, num_workers=0)
     print(f'  Test samples: {len(test_dataset)}')
 
-    # Load model
-    print(f'Loading model from {args.model_path}...')
-    model = CodeBERTClassifier(model_name=args.model_name, num_labels=args.num_labels)
+    # Build the matching model architecture.
+    if is_kicl:
+        print(f'  Architecture: KICL (fusion_type={fusion_type}, num_metrics={num_metrics})')
+        model = KICLModel(model_name=args.model_name, num_labels=args.num_labels,
+                          fusion_type=fusion_type, num_metrics=num_metrics)
+    else:
+        print('  Architecture: CodeBERTClassifier')
+        model = CodeBERTClassifier(model_name=args.model_name, num_labels=args.num_labels)
 
-    checkpoint = torch.load(args.model_path, map_location=device, weights_only=False)
-    model.load_state_dict(
-        checkpoint['model_state_dict'],
-        strict=False
-    )
+    model.load_state_dict(state_dict, strict=False)
     model.to(device)
-    print(f'  Loaded from epoch {checkpoint.get("epoch", "?")} '
-          f'(val_loss={checkpoint.get("val_loss", "?"):.4f})')
+    val_metric = checkpoint.get('val_loss', checkpoint.get('metric'))
+    val_str = f'{val_metric:.4f}' if isinstance(val_metric, (int, float)) else str(val_metric)
+    print(f'  Loaded from epoch {checkpoint.get("epoch", "?")} (val_metric={val_str})')
 
     # Get predictions
-    y_true, y_pred, y_prob = get_predictions(model, test_loader, device)
+    y_true, y_pred, y_prob = get_predictions(model, test_loader, device, use_metrics=use_metrics)
 
     # Compute metrics
     label_names = ['Critical (0)', 'Major (1)', 'Medium (2)', 'Minor (3)']
