@@ -14,7 +14,14 @@ def main():
     # 1. Load Data
     meta = pd.read_csv(os.path.join(args.data_dir, 'Bug_meta_data.csv'), encoding='latin1', low_memory=False, nrows=args.nrows)
     contrib = pd.read_csv(os.path.join(args.data_dir, 'CSV_Contribution_information_dataset.csv'), encoding='latin1', nrows=args.nrows)
-    comments = pd.read_csv(os.path.join(args.data_dir, 'comments_Dataset_Part_1.csv'), encoding='latin1', low_memory=False, nrows=args.nrows)
+    
+    print("Loading comments parts...")
+    parts = []
+    for part in ['comments_Dataset_Part_1.csv', 'comments_Dataset_Part_2.csv', 'comments_Dataset_Part_3.csv']:
+        p_path = os.path.join(args.data_dir, part)
+        if os.path.exists(p_path):
+            parts.append(pd.read_csv(p_path, encoding='latin1', low_memory=False, nrows=args.nrows))
+    comments = pd.concat(parts, ignore_index=True) if parts else pd.DataFrame()
 
     # 2. Extract Reporter ID and Deduplicate Metadata
     print("Deduplicating and extracting reporter_id...")
