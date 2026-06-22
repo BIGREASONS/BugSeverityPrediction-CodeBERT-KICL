@@ -13,7 +13,7 @@ Domain-Specific Representation Learning"
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from transformers import AutoModel, AutoConfig
+from transformers import AutoModel, AutoConfig, T5EncoderModel
 
 
 class KICLModel(nn.Module):
@@ -28,7 +28,12 @@ class KICLModel(nn.Module):
         self.fusion_type = fusion_type
         self.num_metrics = num_metrics
         self.config = AutoConfig.from_pretrained(model_name)
-        self.encoder = AutoModel.from_pretrained(model_name)
+        
+        self.is_t5 = "t5" in model_name.lower()
+        if self.is_t5:
+            self.encoder = T5EncoderModel.from_pretrained(model_name, torch_dtype=torch.float32)
+        else:
+            self.encoder = AutoModel.from_pretrained(model_name, torch_dtype=torch.float32)
 
         # Store class weights for weighted CE in finetune
         if class_weights is not None:
@@ -37,7 +42,11 @@ class KICLModel(nn.Module):
             self.class_weights = None
 
 
-        hidden_size = self.config.hidden_size  # 768
+        hidden_size = getattr(
+            self.config,
+            "d_model",
+            getattr(self.config, "hidden_size", 768)
+        )
 
         # MLM head for Knowledge-Intensified pre-training
         self.mlm_head = nn.Sequential(
@@ -80,9 +89,16 @@ class KICLModel(nn.Module):
         return outputs
 
     def get_cls_embedding(self, input_ids, attention_mask):
-        """Get [CLS] token embedding."""
+        """Get [CLS] token embedding or mean pooling for T5."""
         outputs = self.encode(input_ids, attention_mask)
-        return outputs.last_hidden_state[:, 0, :]
+        if self.is_t5:
+            hidden_states = outputs.last_hidden_state
+            input_mask_expanded = attention_mask.unsqueeze(-1).expand(hidden_states.size()).float()
+            sum_embeddings = torch.sum(hidden_states * input_mask_expanded, 1)
+            sum_mask = torch.clamp(input_mask_expanded.sum(1), min=1e-9)
+            return sum_embeddings / sum_mask
+        else:
+            return outputs.last_hidden_state[:, 0, :]
 
     def forward_mlm(self, input_ids, attention_mask, mlm_labels=None):
         """Forward pass for masked language model pre-training."""

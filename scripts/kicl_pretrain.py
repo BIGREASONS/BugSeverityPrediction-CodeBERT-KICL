@@ -267,6 +267,21 @@ def main():
 
     os.makedirs(args.output_dir, exist_ok=True)
 
+    import transformers.tokenization_utils_tokenizers
+    original_add_tokens = transformers.tokenization_utils_tokenizers.PreTrainedTokenizerFast._add_tokens
+    def patched_add_tokens(self, new_tokens, *args, **kwargs):
+        if isinstance(new_tokens, list):
+            clean = []
+            for t in new_tokens:
+                if isinstance(t, dict): clean.append(t.get('content', str(t)))
+                elif hasattr(t, '__dict__') and not isinstance(t, str) and type(t).__name__ != 'AddedToken':
+                    # Fallback for weird objects
+                    clean.append(str(t))
+                else: clean.append(t)
+            return original_add_tokens(self, clean, *args, **kwargs)
+        return original_add_tokens(self, new_tokens, *args, **kwargs)
+    transformers.tokenization_utils_tokenizers.PreTrainedTokenizerFast._add_tokens = patched_add_tokens
+
     tokenizer = AutoTokenizer.from_pretrained(args.model_name)
 
     train_dataset = BugSeverityDataset(
@@ -303,7 +318,7 @@ def main():
         ckpt = torch.load(args.checkpoint, map_location=device, weights_only=False)
         model.load_state_dict(ckpt['model_state_dict'], strict=False)
 
-    model.to(device)
+    print('Moving model to device...'); model.to(device); print('Model moved to device!')
 
     # For finetune stage: compute class weights and create weighted sampler
     class_weights_tensor = None
@@ -329,25 +344,30 @@ def main():
         print(f'  Finetune: class_weights={[round(w, 3) for w in cw]}')
         print(f'  WeightedRandomSampler created ({len(sw)} samples)')
 
+    print('Creating DataLoaders...'); nw = 0 if os.name == 'nt' else 4
     train_loader = DataLoader(
-        train_dataset, batch_size=args.batch_size,
+        train_dataset,
+        batch_size=args.batch_size,
         sampler=sampler,
-        shuffle=(sampler is None),
-        num_workers=0,
+        num_workers=nw,
+        pin_memory=True
     )
     valid_loader = DataLoader(
-        valid_dataset, batch_size=args.batch_size, shuffle=False, num_workers=0
+        valid_dataset,
+        batch_size=args.batch_size * 2,
+        shuffle=False,
+        num_workers=nw,
+        pin_memory=True
     )
-
-    total_steps = len(train_loader) * args.epochs
+    print('DataLoaders created!'); total_steps = len(train_loader) * args.epochs
     warmup_steps = int(total_steps * 0.1)
-    optimizer = AdamW(model.parameters(), lr=args.lr, weight_decay=0.01)
+    print('Creating optimizer...'); optimizer = AdamW(model.parameters(), lr=args.lr, weight_decay=0.01)
     scheduler = get_linear_schedule_with_warmup(optimizer, warmup_steps, total_steps)
 
     print(f'\nTraining for {args.epochs} epochs ({total_steps} steps)...\n')
 
     history = []
-    best_metric = float('inf')
+    best_metric = float('-inf') if args.stage == 'finetune' else float('inf')
     start_time = time.time()
 
     for epoch in range(1, args.epochs + 1):
@@ -383,10 +403,11 @@ def main():
                 'train_acc': round(train_acc, 4),
                 **{k: round(v, 4) for k, v in eval_metrics.items()}
             })
-            metric = val_loss
+            metric = eval_metrics['f1_macro']
 
         # Save best checkpoint
-        if metric < best_metric:
+        better = (metric > best_metric) if args.stage == 'finetune' else (metric < best_metric)
+        if better:
             best_metric = metric
             save_path = os.path.join(args.output_dir, f'kicl_{args.stage}{run_suffix}_best.pt')
             torch.save({
@@ -394,6 +415,7 @@ def main():
                 'model_state_dict': model.state_dict(),
                 'metric': metric,
                 'args': vars(args),
+                'model_name': args.model_name,
                 # Self-describing config so evaluate.py can reproduce inference.
                 'fusion_type': args.fusion_type,
                 'num_metrics': args.num_metrics,
