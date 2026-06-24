@@ -34,6 +34,7 @@ from sklearn.metrics import (
     classification_report,
 )
 from sklearn.preprocessing import StandardScaler
+from imblearn.metrics import geometric_mean_score
 from tqdm import tqdm
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -122,6 +123,9 @@ def compute_metrics(y_true, y_pred, y_prob, label_names=None):
 
     # MCC (Matthews Correlation Coefficient)
     metrics['mcc'] = float(matthews_corrcoef(y_true, y_pred))
+
+    # G-Mean (Geometric Mean)
+    metrics['g_mean'] = float(geometric_mean_score(y_true, y_pred, average='weighted'))
 
     # Confusion matrix
     cm = confusion_matrix(y_true, y_pred)

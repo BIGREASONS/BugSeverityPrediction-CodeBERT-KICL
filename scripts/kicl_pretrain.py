@@ -25,6 +25,7 @@ from torch.optim import AdamW
 from sklearn.utils.class_weight import compute_class_weight as sklearn_compute_class_weight
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, matthews_corrcoef
+from imblearn.metrics import geometric_mean_score
 from transformers import AutoTokenizer, get_linear_schedule_with_warmup
 from tqdm import tqdm
 
@@ -226,6 +227,7 @@ def evaluate_finetune(model, dataloader, device):
     f1_macro = f1_score(all_labels, all_preds, average='macro', zero_division=0)
     f1_weight = f1_score(all_labels, all_preds, average='weighted', zero_division=0)
     mcc = matthews_corrcoef(all_labels, all_preds)
+    g_mean = geometric_mean_score(all_labels, all_preds, average='weighted')
     
     return {
         'loss': avg_loss,
@@ -236,7 +238,8 @@ def evaluate_finetune(model, dataloader, device):
         'r_weight': r_weight,
         'f1_macro': f1_macro,
         'f1_weight': f1_weight,
-        'mcc': mcc
+        'mcc': mcc,
+        'g_mean': g_mean
     }
 
 
@@ -381,7 +384,7 @@ def main():
             val_acc = eval_metrics['acc']
             print(f'Epoch {epoch}/{args.epochs} | '
                   f'Train Loss: {train_loss:.4f} Acc: {train_acc:.4f} | '
-                  f'Val Loss: {val_loss:.4f} Acc: {val_acc:.4f} F1-Macro: {eval_metrics["f1_macro"]:.4f} MCC: {eval_metrics["mcc"]:.4f} | '
+                  f'Val Loss: {val_loss:.4f} Acc: {val_acc:.4f} F1-Macro: {eval_metrics["f1_macro"]:.4f} MCC: {eval_metrics["mcc"]:.4f} G-Mean: {eval_metrics["g_mean"]:.4f} | '
                   f'Time: {time.time()-epoch_start:.0f}s')
             history.append({
                 'epoch': epoch,
