@@ -213,7 +213,8 @@ def main():
 
     # Load tokenizer
     print(f'Loading tokenizer: {args.model_name}')
-    tokenizer = AutoTokenizer.from_pretrained(args.model_name)
+    tokenizer_path = 'codet5p_tokenizer' if 'codet5p' in args.model_name.lower() and os.path.exists('codet5p_tokenizer') else args.model_name
+    tokenizer = AutoTokenizer.from_pretrained(tokenizer_path)
 
     # Load datasets
     print('Loading datasets...')

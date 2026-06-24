@@ -216,7 +216,8 @@ def main():
 
     # Load tokenizer
     from transformers import AutoTokenizer
-    tokenizer = AutoTokenizer.from_pretrained(args.model_name)
+    tokenizer_path = 'codet5p_tokenizer' if 'codet5p' in args.model_name.lower() and os.path.exists('codet5p_tokenizer') else args.model_name
+    tokenizer = AutoTokenizer.from_pretrained(tokenizer_path)
 
     # Load checkpoint first so it can describe its own architecture/config.
     print(f'Loading model from {args.model_path}...')
