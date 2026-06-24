@@ -270,16 +270,9 @@ def main():
     import transformers.tokenization_utils_tokenizers
     original_add_tokens = transformers.tokenization_utils_tokenizers.PreTrainedTokenizerFast._add_tokens
     def patched_add_tokens(self, new_tokens, *args, **kwargs):
-        if isinstance(new_tokens, list):
-            clean = []
-            for t in new_tokens:
-                if isinstance(t, dict): clean.append(t.get('content', str(t)))
-                elif hasattr(t, '__dict__') and not isinstance(t, str) and type(t).__name__ != 'AddedToken':
-                    # Fallback for weird objects
-                    clean.append(str(t))
-                else: clean.append(t)
-            return original_add_tokens(self, clean, *args, **kwargs)
-        return original_add_tokens(self, new_tokens, *args, **kwargs)
+        # Prevent HuggingFace from crashing on malformed added_tokens.json
+        # and prevent it from incorrectly inflating the 32100 vocab size.
+        return 0
     transformers.tokenization_utils_tokenizers.PreTrainedTokenizerFast._add_tokens = patched_add_tokens
 
     tokenizer = AutoTokenizer.from_pretrained(args.model_name)

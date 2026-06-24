@@ -55,6 +55,12 @@ class KICLModel(nn.Module):
             nn.LayerNorm(hidden_size),
             nn.Linear(hidden_size, self.config.vocab_size),
         )
+        
+        # Tie weights
+        if self.is_t5:
+            self.mlm_head[-1].weight = self.encoder.shared.weight
+        else:
+            self.mlm_head[-1].weight = self.encoder.embeddings.word_embeddings.weight
 
         # Projection head for contrastive learning
         self.projection_head = nn.Sequential(
