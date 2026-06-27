@@ -137,6 +137,19 @@ class KICLModel(nn.Module):
         """
         cls_embedding = self.get_cls_embedding(input_ids, attention_mask)
         projections = self.projection_head(cls_embedding)
+        
+        if not hasattr(self, '_printed_shapes'):
+            print(f"\n[Representation Quality Verification]")
+            print(f"CLS embedding shape: {cls_embedding.shape}")
+            print(f"Projection embedding shape: {projections.shape}")
+            self._printed_shapes = True
+            
+        if torch.isnan(cls_embedding).any() or torch.isinf(cls_embedding).any():
+            raise ValueError("FATAL: NaNs or Infs detected in CLS embeddings!")
+            
+        if torch.isnan(projections).any() or torch.isinf(projections).any():
+            raise ValueError("FATAL: NaNs or Infs detected in Projection embeddings!")
+            
         projections = F.normalize(projections, dim=-1)
 
         # Supervised contrastive loss (SupCon)

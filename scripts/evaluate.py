@@ -110,8 +110,17 @@ def compute_metrics(y_true, y_pred, y_prob, label_names=None):
     metrics['recall_weighted'] = float(recall_score(y_true, y_pred, average='weighted', zero_division=0))
     metrics['f1_weighted'] = float(f1_score(y_true, y_pred, average='weighted', zero_division=0))
 
-    # Per-class F1
+    # Macro metrics
+    metrics['precision_macro'] = float(precision_score(y_true, y_pred, average='macro', zero_division=0))
+    metrics['recall_macro'] = float(recall_score(y_true, y_pred, average='macro', zero_division=0))
+    metrics['f1_macro'] = float(f1_score(y_true, y_pred, average='macro', zero_division=0))
+
+    # Per-class metrics
+    p_per_class = precision_score(y_true, y_pred, average=None, zero_division=0)
+    r_per_class = recall_score(y_true, y_pred, average=None, zero_division=0)
     f1_per_class = f1_score(y_true, y_pred, average=None, zero_division=0)
+    metrics['precision_per_class'] = {f'class_{i}': float(p_per_class[i]) for i in range(len(p_per_class))}
+    metrics['recall_per_class'] = {f'class_{i}': float(r_per_class[i]) for i in range(len(r_per_class))}
     metrics['f1_per_class'] = {f'class_{i}': float(f1_per_class[i]) for i in range(len(f1_per_class))}
 
     # AUC (weighted, one-vs-rest)
@@ -125,7 +134,7 @@ def compute_metrics(y_true, y_pred, y_prob, label_names=None):
     metrics['mcc'] = float(matthews_corrcoef(y_true, y_pred))
 
     # G-Mean (Geometric Mean)
-    metrics['g_mean'] = float(geometric_mean_score(y_true, y_pred, average='weighted'))
+    metrics['g_mean'] = float(geometric_mean_score(y_true, y_pred, average='multiclass'))
 
     # Confusion matrix
     cm = confusion_matrix(y_true, y_pred)
@@ -192,13 +201,18 @@ def print_results(metrics):
     print(f'  Recall (Weighted):     {metrics["recall_weighted"]:.4f}')
     print(f'  F1 (Weighted):         {metrics["f1_weighted"]:.4f}')
 
+    print(f'\n  Precision (Macro):     {metrics["precision_macro"]:.4f}')
+    print(f'  Recall (Macro):        {metrics["recall_macro"]:.4f}')
+    print(f'  F1 (Macro):            {metrics["f1_macro"]:.4f}')
+
     print(f'\n  F1 per Class:')
     for cls, f1 in metrics['f1_per_class'].items():
         print(f'    {cls}: {f1:.4f}')
 
     auc = metrics.get('auc_weighted')
-    print(f'\n  AUC (Weighted):        {auc:.4f}' if auc is not None else '\n  AUC (Weighted):        N/A')
+    print(f'\n  Weighted ROC-AUC:      {auc:.4f}' if auc is not None else '\n  Weighted ROC-AUC:      N/A')
     print(f'  MCC:                   {metrics["mcc"]:.4f}')
+    print(f'  G-Mean:                {metrics["g_mean"]:.4f}')
 
     print('\n  Confusion Matrix:')
     cm = np.array(metrics['confusion_matrix'])
@@ -291,8 +305,26 @@ def main():
     # Print results
     print_results(metrics)
 
+    # Determine output filename prefix based on model and experiment type
+    model_lower = args.model_name.lower()
+    if 'codebert' in model_lower:
+        base_name = 'codebert'
+    elif 'unixcoder' in model_lower:
+        base_name = 'unixcoder'
+    elif 'codet5p' in model_lower:
+        base_name = 'codet5p'
+    else:
+        base_name = model_lower.split('/')[-1].replace('-', '_')
+
+    if is_kicl and fusion_type != 'none':
+        run_suffix = 'kicl'
+    else:
+        run_suffix = args.experiment if args.experiment else 'unknown'
+        
+    out_prefix = f"{base_name}_{run_suffix}"
+
     # Save results
-    results_path = os.path.join(args.output_dir, 'baseline_results.json')
+    results_path = os.path.join(args.output_dir, f'{out_prefix}_results.json')
     serializable_metrics = {k: v for k, v in metrics.items() if k != 'classification_report'}
     serializable_metrics['classification_report_text'] = classification_report(
         y_true, y_pred, target_names=label_names, zero_division=0
@@ -303,7 +335,7 @@ def main():
 
     # Plot confusion matrix
     cm = np.array(metrics['confusion_matrix'])
-    cm_path = os.path.join(args.output_dir, 'confusion_matrix.png')
+    cm_path = os.path.join(args.output_dir, f'{out_prefix}_confusion_matrix.png')
     plot_confusion_matrix(cm, label_names, cm_path)
 
 

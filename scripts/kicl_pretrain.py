@@ -305,7 +305,18 @@ def main():
     if args.checkpoint:
         print(f'Loading checkpoint: {args.checkpoint}')
         ckpt = torch.load(args.checkpoint, map_location=device, weights_only=False)
-        model.load_state_dict(ckpt['model_state_dict'], strict=False)
+        incompat_keys = model.load_state_dict(ckpt['model_state_dict'], strict=False)
+        
+        print(f"\n[Checkpoint Loading Verification]")
+        print(f"Path: {args.checkpoint}")
+        print(f"Missing keys: {len(incompat_keys.missing_keys)} -> {incompat_keys.missing_keys[:5]}{'...' if len(incompat_keys.missing_keys)>5 else ''}")
+        print(f"Unexpected keys: {len(incompat_keys.unexpected_keys)} -> {incompat_keys.unexpected_keys[:5]}{'...' if len(incompat_keys.unexpected_keys)>5 else ''}")
+        
+        # Simple heuristic: if the encoder embeddings are in the missing keys, we failed to load the backbone.
+        for mk in incompat_keys.missing_keys:
+            if 'encoder.embeddings' in mk or 'encoder.shared' in mk:
+                raise RuntimeError(f"FATAL: Crucial backbone weights missing from checkpoint: {mk}. The checkpoint was not loaded correctly.")
+        print("[OK] Checkpoint successfully loaded.\n")
 
     print('Moving model to device...'); model.to(device); print('Model moved to device!')
 

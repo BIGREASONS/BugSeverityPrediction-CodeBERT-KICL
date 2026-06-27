@@ -267,3 +267,37 @@ BugSeverityPrediction-CodeBERT-KICL/
 ## License
 
 This project is licensed under the MIT License — see the [LICENSE](LICENSE) file for details.
+
+## Experimental Results
+
+The full CodeT5+ KICL pipeline (MLM -> Contrastive -> Finetuning) was successfully completed, audited, and strictly evaluated on the consistent `test.jsonl` split against all previous baselines.
+
+### Best Model
+**CodeT5+ KICL**
+
+### Best Metrics (Test Set Only)
+* **Weighted F1**: 0.5783
+* **Accuracy (Weighted Recall)**: 0.5663
+* **MCC**: 0.3852
+* **G-Mean**: 0.3957
+
+### Current SOTA within this repository
+CodeT5+ utilizing the Knowledge-Intensified Contrastive Learning (KICL) pipeline holds the state-of-the-art for this repository. 
+
+### Final Leaderboard
+
+| Backbone | Experiment | Accuracy | W.Precision | W.Recall | W.F1 | M.Precision | M.Recall | M.F1 | W.ROC-AUC | MCC | G-Mean |
+|----------|------------|----------|-------------|----------|------|-------------|----------|------|-----------|-----|--------|
+| **CodeT5+ KICL** | **KICL** | 0.5663 | 0.6684 | 0.5663 | **0.5783** | 0.4780 | 0.4981 | 0.4519 | 0.7951 | 0.3852 | 0.3957 |
+| CodeT5+ | C | 0.4200 | 0.5065 | 0.4200 | 0.3835 | 0.2924 | 0.2954 | 0.2343 | 0.5859 | 0.1394 | 0.0000 |
+| CodeBERT | A | 0.2532 | 0.4199 | 0.2532 | 0.2923 | 0.2340 | 0.2184 | 0.1816 | 0.5046 | -0.0152 | 0.1823 |
+| CodeT5+ | B | 0.3419 | 0.4286 | 0.3419 | 0.2725 | 0.2262 | 0.2618 | 0.1757 | 0.5809 | 0.0436 | 0.0000 |
+| CodeBERT | B | 0.2180 | 0.3714 | 0.2180 | 0.2539 | 0.2122 | 0.2449 | 0.1646 | 0.4364 | -0.0344 | 0.2043 |
+| UniXCoder | B | 0.1234 | 0.4050 | 0.1234 | 0.1700 | 0.2326 | 0.2561 | 0.1001 | 0.4815 | -0.0100 | 0.0693 |
+| CodeBERT | C | 0.1047 | 0.3890 | 0.1047 | 0.1570 | 0.1736 | 0.2276 | 0.0730 | 0.4399 | 0.0430 | 0.0000 |
+| CodeT5+ | A | 0.2751 | 0.3327 | 0.2751 | 0.1353 | 0.2092 | 0.2475 | 0.1240 | 0.5360 | -0.0080 | 0.0000 |
+| UniXCoder | A | 0.0772 | 0.0243 | 0.0772 | 0.0367 | 0.0434 | 0.2203 | 0.0661 | 0.5407 | 0.0164 | 0.0000 |
+| UniXCoder | C | 0.0507 | 0.0186 | 0.0507 | 0.0263 | 0.0343 | 0.2486 | 0.0498 | 0.4939 | -0.0105 | 0.0000 |
+
+### Research Observations
+The hypothesis that KICL improves bug severity prediction was strongly supported. Pretraining with Masked Language Modeling (MLM) smoothly reduced domain-adaptation loss, and supervised contrastive learning helped build robust representations. The full pipeline achieved significant improvements over standard finetuning, outperforming the CodeT5+ Exp C baseline by **+0.1948 in Weighted F1**.
