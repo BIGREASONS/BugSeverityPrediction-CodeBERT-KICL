@@ -1,0 +1,17 @@
+[
+  {
+    "epoch": 1,
+    "train_loss": 1.0603,
+    "train_acc": 0.34,
+    "loss": 1.4661,
+    "acc": 0.1446,
+    "p_macro": 0.064,
+    "p_weight": 0.0521,
+    "r_macro": 0.2504,
+    "r_weight": 0.1446,
+    "f1_macro": 0.064,
+    "f1_weight": 0.0373,
+    "mcc": -0.0015,
+    "g_mean": 0.3516
+  }
+]

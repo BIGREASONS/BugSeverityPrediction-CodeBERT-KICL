@@ -1,0 +1,57 @@
+{
+  "accuracy": 0.14488117001828155,
+  "precision_weighted": 0.061014071405879666,
+  "recall_weighted": 0.14488117001828155,
+  "f1_weighted": 0.03745805879748854,
+  "precision_macro": 0.07193620226632606,
+  "recall_macro": 0.2504071661237785,
+  "f1_macro": 0.06408108409640684,
+  "precision_per_class": {
+    "class_0": 0.0,
+    "class_1": 0.1448876662081614,
+    "class_2": 0.0,
+    "class_3": 0.14285714285714285
+  },
+  "recall_per_class": {
+    "class_0": 0.0,
+    "class_1": 1.0,
+    "class_2": 0.0,
+    "class_3": 0.0016286644951140066
+  },
+  "f1_per_class": {
+    "class_0": 0.0,
+    "class_1": 0.25310372446936324,
+    "class_2": 0.0,
+    "class_3": 0.00322061191626409
+  },
+  "auc_weighted": 0.5958565926972006,
+  "mcc": 0.00035040963960084157,
+  "g_mean": 0.0,
+  "confusion_matrix": [
+    [
+      0,
+      19,
+      0,
+      0
+    ],
+    [
+      0,
+      316,
+      0,
+      0
+    ],
+    [
+      0,
+      1233,
+      0,
+      6
+    ],
+    [
+      0,
+      613,
+      0,
+      1
+    ]
+  ],
+  "classification_report_text": "              precision    recall  f1-score   support\n\nCritical (0)       0.00      0.00      0.00        19\n   Major (1)       0.14      1.00      0.25       316\n  Medium (2)       0.00      0.00      0.00      1239\n   Minor (3)       0.14      0.00      0.00       614\n\n    accuracy                           0.14      2188\n   macro avg       0.07      0.25      0.06      2188\nweighted avg       0.06      0.14      0.04      2188\n"
+}
